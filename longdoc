@@ -1,0 +1,397 @@
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_ollama import ChatOllama
+
+from pydantic import BaseModel, Field
+
+
+# ============================================================
+# 1. PYDANTIC MODEL
+# ============================================================
+
+class KeyFacts(BaseModel):
+
+    dates: list[str] = Field(
+        ...,
+        description="Important dates mentioned in the document"
+    )
+
+    places: list[str] = Field(
+        ...,
+        description="Important places mentioned in the document"
+    )
+
+    people: list[str] = Field(
+        ...,
+        description="Important people mentioned in the document"
+    )
+
+    numbers: list[str] = Field(
+        ...,
+        description="Important numbers mentioned in the document"
+    )
+
+    events: list[str] = Field(
+        ...,
+        description="Important events mentioned in the document"
+    )
+
+
+# ============================================================
+# 2. JSON OUTPUT PARSER
+# ============================================================
+
+parser = JsonOutputParser(
+    pydantic_object=KeyFacts
+)
+
+
+# ============================================================
+# 3. OLLAMA MODEL
+# ============================================================
+
+model = ChatOllama(
+    model="qwen/qwen3.8-27b",
+    temperature=0
+)
+
+
+# ============================================================
+# 4. ORIGINAL DOCUMENT
+# ============================================================
+
+document = """
+The Eiffel Tower, located in Paris, France, was constructed between
+1887 and 1889 as the entrance arch to the 1889 World’s Fair.
+
+It was designed by Gustave Eiffel’s engineering company and initially
+faced criticism from artists and intellectuals who considered it an eyesore.
+
+Today, the Eiffel Tower is one of the most visited monuments in the world,
+attracting over 7 million visitors annually.
+
+In 2015, special lighting systems were added to enhance its nighttime
+appearance and improve energy efficiency.
+"""
+
+
+# ============================================================
+# 5. TASK 1 — DOCUMENT SPLITTING
+# ============================================================
+
+# Semantic splitting:
+# Each paragraph represents one meaningful idea.
+
+chunks = [
+    """
+    The Eiffel Tower, located in Paris, France, was constructed between
+    1887 and 1889 as the entrance arch to the 1889 World’s Fair.
+    """,
+
+    """
+    It was designed by Gustave Eiffel’s engineering company and initially
+    faced criticism from artists and intellectuals who considered it an eyesore.
+    """,
+
+    """
+    Today, the Eiffel Tower is one of the most visited monuments in the world,
+    attracting over 7 million visitors annually.
+    """,
+
+    """
+    In 2015, special lighting systems were added to enhance its nighttime
+    appearance and improve energy efficiency.
+    """
+]
+
+
+print("=" * 60)
+print("TASK 1 — DOCUMENT SPLITTING")
+print("=" * 60)
+
+print(f"\nOriginal document length: {len(document)} characters")
+print(f"Number of chunks: {len(chunks)}")
+
+for index, chunk in enumerate(chunks, start=1):
+
+    print(f"\nCHUNK {index}")
+    print("-" * 40)
+    print(chunk.strip())
+
+
+# ============================================================
+# 6. TASK 2 — KEY FACT EXTRACTION PROMPT
+# ============================================================
+
+extraction_prompt = PromptTemplate(
+    template="""
+You are an information extraction system.
+
+Analyze the following document chunk.
+
+Extract the important:
+
+- dates
+- places
+- people
+- numbers
+- events
+
+Return ONLY a JSON object.
+
+Do not return:
+- explanations
+- markdown
+- ```json
+- JSON schema
+- properties
+- required
+- descriptions
+
+Use exactly this structure:
+
+{{
+    "dates": [],
+    "places": [],
+    "people": [],
+    "numbers": [],
+    "events": []
+}}
+
+Document chunk:
+
+{chunk}
+""",
+
+    input_variables=["chunk"]
+)
+
+
+# ============================================================
+# 7. PROCESS EACH CHUNK
+# ============================================================
+
+print("\n")
+print("=" * 60)
+print("TASK 2 — KEY FACT EXTRACTION")
+print("=" * 60)
+
+
+# Temporary storage for all extracted facts
+
+all_facts = {
+    "dates": [],
+    "places": [],
+    "people": [],
+    "numbers": [],
+    "events": []
+}
+
+
+for index, chunk in enumerate(chunks, start=1):
+
+    print(f"\nProcessing chunk {index}...")
+
+    try:
+
+        # ----------------------------------------------------
+        # Create prompt for the current chunk
+        # ----------------------------------------------------
+
+        prompt_text = extraction_prompt.format(
+            chunk=chunk
+        )
+
+        # ----------------------------------------------------
+        # Send chunk to Ollama
+        # ----------------------------------------------------
+
+        response = model.invoke(
+            prompt_text
+        )
+
+        print("\nRaw response:")
+        print(response.content)
+
+        # ----------------------------------------------------
+        # Parse JSON
+        # ----------------------------------------------------
+
+        parsed_data = parser.parse(
+            response.content
+        )
+
+        # ----------------------------------------------------
+        # Validate with Pydantic
+        # ----------------------------------------------------
+
+        facts = KeyFacts.model_validate(
+            parsed_data
+        )
+
+        print("\nValidation: SUCCESS")
+
+        # ----------------------------------------------------
+        # Add the facts to the global result
+        # ----------------------------------------------------
+
+        all_facts["dates"].extend(
+            facts.dates
+        )
+
+        all_facts["places"].extend(
+            facts.places
+        )
+
+        all_facts["people"].extend(
+            facts.people
+        )
+
+        all_facts["numbers"].extend(
+            facts.numbers
+        )
+
+        all_facts["events"].extend(
+            facts.events
+        )
+
+    except Exception as error:
+
+        print("\nValidation: FAILED")
+        print(error)
+
+
+# ============================================================
+# 8. REMOVE DUPLICATES
+# ============================================================
+
+for category in all_facts:
+
+    # dict.fromkeys() removes duplicates
+    # while preserving the original order
+
+    all_facts[category] = list(
+        dict.fromkeys(
+            all_facts[category]
+        )
+    )
+
+
+# ============================================================
+# 9. DISPLAY FINAL KEY FACTS
+# ============================================================
+
+print("\n")
+print("=" * 60)
+print("FINAL KEY FACTS")
+print("=" * 60)
+
+
+print("\nDates:")
+
+for item in all_facts["dates"]:
+    print(f"- {item}")
+
+
+print("\nPlaces:")
+
+for item in all_facts["places"]:
+    print(f"- {item}")
+
+
+print("\nPeople:")
+
+for item in all_facts["people"]:
+    print(f"- {item}")
+
+
+print("\nNumbers:")
+
+for item in all_facts["numbers"]:
+    print(f"- {item}")
+
+
+print("\nEvents:")
+
+for item in all_facts["events"]:
+    print(f"- {item}")
+
+
+# ============================================================
+# 10. TASK 3 — SUMMARY
+# ============================================================
+
+summary_prompt = PromptTemplate(
+    template="""
+You are a document summarization assistant.
+
+Write a short summary of the following document.
+
+Requirements:
+
+- Write 2 or 3 sentences.
+- Keep only the most important information.
+- Do not invent information.
+- Stay faithful to the original document.
+- Return ONLY the summary.
+
+Document:
+
+{document}
+""",
+
+    input_variables=["document"]
+)
+
+
+print("\n")
+print("=" * 60)
+print("TASK 3 — DOCUMENT SUMMARY")
+print("=" * 60)
+
+
+try:
+
+    # --------------------------------------------------------
+    # Reconstruct the document from the chunks
+    # --------------------------------------------------------
+
+    document_from_chunks = "\n\n".join(
+        chunks
+    )
+
+    # --------------------------------------------------------
+    # Create summary prompt
+    # --------------------------------------------------------
+
+    prompt_text = summary_prompt.format(
+        document=document_from_chunks
+    )
+
+    # --------------------------------------------------------
+    # Ask Ollama for the summary
+    # --------------------------------------------------------
+
+    response = model.invoke(
+        prompt_text
+    )
+
+    summary = response.content.strip()
+
+    print("\nSUMMARY:")
+    print(summary)
+
+except Exception as error:
+
+    print("\nSUMMARY FAILED")
+    print(error)
+
+
+# ============================================================
+# 11. FINAL RESULT
+# ============================================================
+
+print("\n")
+print("=" * 60)
+print("EXERCISE COMPLETED")
+print("=" * 60)
